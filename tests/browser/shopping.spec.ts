@@ -1,0 +1,90 @@
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { Db } from '../../apps/api/src/db';
+
+const db = new Db();
+test.afterAll(async () => db.$disconnect());
+test('two browsers share permissions, purchases, alternatives, reconnect and mobile layout', async ({ browser }) => {
+  test.setTimeout(90000);
+  const ownerContext = await browser.newContext(), memberContext = await browser.newContext();
+  const owner = await ownerContext.newPage(), member = await memberContext.newPage();
+  await member.clock.install();
+  const users: string[] = [];
+  async function start(page: Page, context: BrowserContext) {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Try as a guest' }).click();
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    const response = await context.request.get('/api/auth/me');
+    const identity = await response.json() as { id: string };
+    users.push(identity.id);
+    await expect(page.getByRole('status')).toContainText('Live and connected');
+    return identity.id;
+  }
+  try {
+    const ownerId = await start(owner, ownerContext);
+    const memberId = await start(member, memberContext);
+    await db.user.update({ where: { id: ownerId }, data: { kind: 'google', googleSubject: `browser-${ownerId}`, name: 'Test owner' } });
+    await owner.reload();
+    await owner.getByLabel('New list name').fill('Family groceries');
+    await owner.getByRole('button', { name: 'Create list' }).click();
+    await expect(owner.getByRole('heading', { name: 'Family groceries' })).toBeVisible();
+    await owner.getByText('Share and manage members', { exact: true }).click();
+    await owner.getByRole('button', { name: 'Generate / rotate code' }).click();
+    const code = await owner.locator('.code').innerText();
+    await expect(owner.getByRole('img', { name: 'QR code to join this shopping list' })).toBeVisible();
+    await member.goto(`/join#code=${code}`);
+    await expect(member.getByLabel('12-character code')).toHaveValue(code);
+    await expect(member).toHaveURL('/join');
+    await member.getByRole('button', { name: 'Join list' }).click();
+    await expect(member.getByText('You can view this list live.', { exact: false })).toBeVisible();
+    await expect(member.getByRole('button', { name: 'Add item', exact: true })).toHaveCount(0);
+    await owner.locator('.member').getByLabel('Access').selectOption('editor');
+    await expect(member.getByRole('button', { name: 'Add item', exact: true })).toBeEnabled();
+    const form = owner.locator('.add-item');
+    await form.getByLabel('Item name').fill('Milk');
+    await form.getByLabel('Packs', { exact: true }).fill('2');
+    await form.getByLabel('Amount / pack').fill('500');
+    await form.getByRole('combobox', { name: 'Unit', exact: true }).selectOption('ml');
+    const started = Date.now();
+    await form.getByRole('button', { name: 'Add item', exact: true }).click();
+    await expect(member.getByTestId('item-Milk')).toBeVisible({ timeout: 2000 });
+    expect(Date.now() - started).toBeLessThan(2000);
+    await owner.getByTestId('item-Milk').getByRole('button', { name: 'Edit', exact: true }).click();
+    await owner.getByTestId('item-Milk').getByLabel('Item name').fill('Draft milk');
+    await member.getByRole('button', { name: 'Purchase Milk', exact: true }).click();
+    await expect(owner.getByRole('button', { name: 'Unpurchase Milk' })).toBeVisible();
+    await expect(owner.getByTestId('item-Milk').getByLabel('Item name')).toHaveValue('Draft milk');
+    await owner.getByRole('button', { name: 'Save item', exact: true }).click();
+    await expect(owner.getByRole('alert')).toContainText('Someone changed this item.');
+    await owner.getByRole('button', { name: 'Cancel edit', exact: true }).click();
+    await owner.getByRole('button', { name: 'Unpurchase Milk' }).click();
+    await owner.getByTestId('item-Milk').getByRole('button', { name: 'Unavailable', exact: true }).click();
+    const alternatives = owner.getByTestId('item-Milk').locator('.alternatives');
+    await alternatives.getByLabel('Item name').fill('Oat milk');
+    await alternatives.getByRole('button', { name: 'Add alternative' }).click();
+    await alternatives.getByRole('button', { name: 'Use instead' }).click();
+    await expect(member.getByTestId('item-Oat milk')).toBeVisible();
+    await expect(member.getByTestId('item-Milk').getByText('Unavailable', { exact: true }).first()).toBeVisible();
+    await memberContext.setOffline(true);
+    await expect(member.getByRole('status')).toContainText('Offline');
+    await expect(member.getByRole('button', { name: 'Add item', exact: true })).toBeDisabled();
+    await memberContext.setOffline(false);
+    await expect(member.getByRole('status')).toContainText('Live and connected');
+    await expect(member.getByTestId('item-Oat milk')).toBeVisible();
+    const listId = new URL(owner.url()).pathname.split('/')[2];
+    await db.$transaction(async tx => {
+      await tx.listItem.create({ data: { listId, name: 'Missed notification', packCount: 1, lastActorId: ownerId } });
+      await tx.shoppingList.update({ where: { id: listId }, data: { revision: { increment: 1 } } });
+    });
+    await member.clock.fastForward(31000);
+    await expect(member.getByTestId('item-Missed notification')).toBeVisible();
+    await member.setViewportSize({ width: 360, height: 800 });
+    expect(await member.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    owner.once('dialog', dialog => dialog.accept());
+    await owner.locator('.member').getByRole('button', { name: 'Remove', exact: true }).click();
+    await expect(member.getByRole('alert')).toContainText('List not found or access removed.');
+    expect(await db.listMember.count({ where: { userId: memberId } })).toBe(0);
+  } finally {
+    await db.user.deleteMany({ where: { id: { in: users } } });
+    await ownerContext.close(); await memberContext.close();
+  }
+});

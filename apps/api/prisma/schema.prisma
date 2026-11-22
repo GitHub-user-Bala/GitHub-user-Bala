@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+model User {
+  id            String   @id @default(uuid()) @db.Uuid
+  kind          String   @default("guest")
+  name          String   @default("Guest")
+  googleSubject String?  @unique
+  createdAt     DateTime @default(now())
+  sessions      Session[]
+  lists         ShoppingList[]
+  memberships   ListMember[]
+}
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  digest    String   @unique
+  csrf      String
+  expiresAt DateTime
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}
+model ShoppingList {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String
+  ownerId   String   @db.Uuid
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  revision  Int      @default(0)
+  createdAt DateTime @default(now())
+  members   ListMember[]
+  items     ListItem[]
+  invites   ListInvite[]
+  writes    WriteKey[]
+  @@index([ownerId])
+}
+model ListMember {
+  listId String @db.Uuid
+  userId String @db.Uuid
+  role   String @default("viewer")
+  list   ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([listId, userId])
+  @@index([userId])
+}
+model ListItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  listId         String   @db.Uuid
+  list           ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  name           String
+  packCount      Int
+  amount         Decimal? @db.Decimal(9, 3)
+  unit           String?
+  status         String   @default("needed")
+  version        Int      @default(1)
+  lastActorId    String   @db.Uuid
+  createdAt      DateTime @default(now())
+  originalItemId String?  @unique @db.Uuid
+  original       ListItem? @relation("Replacement", fields: [originalItemId], references: [id], onDelete: SetNull)
+  replacement    ListItem? @relation("Replacement")
+  alternatives   ItemAlternative[]
+  @@index([listId, createdAt])
+}
+model ItemAlternative {
+  id        String @id @default(uuid()) @db.Uuid
+  itemId    String @db.Uuid
+  item      ListItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name      String
+  packCount Int
+  amount    Decimal? @db.Decimal(9, 3)
+  unit      String?
+}
+model ListInvite {
+  id        String @id @default(uuid()) @db.Uuid
+  digest    String @unique
+  listId    String @db.Uuid
+  list      ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean @default(false)
+}
+model WriteKey {
+  listId      String @db.Uuid
+  key         String @db.Uuid
+  actorId     String @db.Uuid
+  fingerprint String
+  itemId      String @db.Uuid
+  createdAt   DateTime @default(now())
+  list        ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  @@id([listId, key])
+}

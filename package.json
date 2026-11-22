@@ -1,0 +1,42 @@
+{
+  "name": "kart",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "pnpm --filter @kart/contracts build && pnpm --parallel --filter @kart/api --filter @kart/web dev",
+    "build": "pnpm --filter @kart/contracts build && pnpm --filter @kart/api build && pnpm --filter @kart/web build",
+    "typecheck": "pnpm --filter @kart/contracts build && pnpm -r typecheck && tsc --noEmit",
+    "lint": "eslint apps packages tests scripts",
+    "test": "tsx --test tests/contracts.test.ts",
+    "test:api": "tsx --tsconfig apps/api/tsconfig.json --test tests/api.test.ts",
+    "test:e2e": "playwright test",
+    "db:generate": "pnpm --filter @kart/api exec prisma generate",
+    "db:migrate": "pnpm --filter @kart/api exec prisma migrate deploy",
+    "db:local": "tsx scripts/local-db.ts",
+    "start": "node apps/api/dist/main.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.0",
+    "@electric-sql/pglite": "^0.5.16",
+    "@electric-sql/pglite-socket": "^0.2.19",
+    "eslint": "^9.28.0",
+    "globals": "^16.2.0",
+    "socket.io-client": "^4.8.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.33.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@opentelemetry/api": "1.9.0"
+    },
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild"
+    ]
+  }
+}
